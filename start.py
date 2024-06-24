@@ -53,11 +53,6 @@ def is_hand_in_circle(landmarks, circle_center, circle_radius):
     distance = calculate_distance(index_tip, circle_center)
     return distance < circle_radius
 
-# Функция для отображения текста с фоном
-def draw_text(image, text, position, font_scale=1, color=(0, 0, 255), thickness=2):
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(image, text, position, font, font_scale, color, thickness)
-
 # Функция для закрашивания круга снизу вверх
 def draw_count(image, center, radius, elapsed_time, max_time, colors):
     if elapsed_time >= max_time:
@@ -88,8 +83,6 @@ cap = cv2.VideoCapture(0)
 countdown = 5
 start_time = None
 screenshot_taken = False
-hand_start_time = None
-reshoot_start_time = None
 frame = None
 left_circle_start_time = None
 right_circle_start_time = None
@@ -178,7 +171,6 @@ with mp_hands.Hands(
                     draw_filled_circle(image, panel_center_left, circle_radius, elapsed_left_time, 2, (0, 0, 255))
                 else:
                     left_circle_start_time = None
-                    cv2.circle(image, panel_center_left, circle_radius, (0, 0, 255), thickness=2)
 
                 if is_hand_in_circle(landmarks, panel_center_right, circle_radius):
                     if right_circle_start_time is None:
@@ -187,7 +179,6 @@ with mp_hands.Hands(
                     draw_filled_circle(image, panel_center_right, circle_radius, elapsed_right_time, 2, (0, 255, 0))
                 else:
                     right_circle_start_time = None
-                    cv2.circle(image, panel_center_right, circle_radius, (0, 255, 0), thickness=2)
 
                 if left_circle_start_time is not None and (time.time() - left_circle_start_time) > 2:
                     screenshot_taken = False
@@ -203,7 +194,6 @@ with mp_hands.Hands(
                     exit()
 
             # Отображение панели внизу изображения
-            panel_h, panel_w, _ = panel_img.shape
             image = overlay_panel(frame_copy, panel_img, 0, img_height - panel_h, scale=1)
 
         cv2.imshow('Drawing_project', image)
