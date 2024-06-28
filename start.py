@@ -69,7 +69,7 @@ def draw_count(image, center, radius, elapsed_time, max_time, colors):
 
         cv2.ellipse(image, center, axes, 0, 0, angle, colors[current_color_index], thickness=-1)
 
-# Функция для закрашивания круга снизу вверх
+# Функция для закрашивания круга
 def draw_filled_circle(image, center, radius, elapsed_time, max_time, color):
     if elapsed_time >= max_time:
         cv2.circle(image, center, radius, color, thickness=-1)
