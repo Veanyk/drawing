@@ -355,8 +355,10 @@ wheel_position = 0
 velocity = 0
 second_wheel_position = 0
 third_wheel_position = 0
+fourth_wheel_position = 0
 show_second_wheel = False
 show_third_wheel = False
+show_fourth_wheel = False
 selected_image = None
 
 brightness_value = 40  # Текущая яркость
@@ -384,6 +386,17 @@ effect_images = [
     resize_image(loaded_effect_images[0], 50, 50),
     resize_image(loaded_effect_images[1], 50, 50),
     resize_image(loaded_effect_images[2], 50, 75)
+]
+
+image_folder = 'background'
+image_paths = [f'{image_folder}/0.png', f'{image_folder}/1.jpg', f'{image_folder}/2.jpg', f'{image_folder}/3.jpg']
+loaded_bg_images = [load_image(path) for path in image_paths]
+
+bg_images = [
+    resize_image(loaded_bg_images[0], 50, 50),
+    resize_image(loaded_bg_images[1], 50, 50),
+    resize_image(loaded_bg_images[2], 50, 50),
+    resize_image(loaded_bg_images[3], 50, 50)
 ]
 
 scale_image = load_image('scale.png')
@@ -422,6 +435,14 @@ with mp_hands.Hands(
         # Если выбран режим Bg
         if int(wheel_position) % len(resized_images) == 1:
             frame_copy = remove_background(frame_copy)
+            show_fourth_wheel = True
+            fourth_wheel_image = draw_wheel(frame_copy, fourth_wheel_position, bg_images)
+            frame_copy = overlay_panel(frame_copy, fourth_wheel_image, 0, 0, 1)
+            if int(fourth_wheel_position) % len(loaded_bg_images) != 0:
+                selected_image = loaded_bg_images[int(fourth_wheel_position) % len(loaded_bg_images)]
+                frame_copy = overlay_background(frame_copy, selected_image)
+        else:
+            show_fourth_wheel = False
 
         # Отображение точки на кончике указательного пальца
         if hand_results.multi_hand_landmarks:
@@ -455,6 +476,14 @@ with mp_hands.Hands(
                         prev_position = point_coords
                         # Запоминаем выбранное изображение для отображения
                         selected_image = loaded_effect_images[int(third_wheel_position) % len(loaded_effect_images)]
+                    elif show_fourth_wheel and point_coords[1] < frame.shape[0] // 4:
+                        if prev_position is not None:
+                            # формула для вычисления скорости
+                            velocity = (point_coords[0] - prev_position[0]) / -100.0
+                            fourth_wheel_position = update_wheel_position(fourth_wheel_position, velocity)
+                        prev_position = point_coords
+                        # Запоминаем выбранное изображение для отображения
+                        selected_image = loaded_bg_images[int(fourth_wheel_position) % len(loaded_bg_images)]
                 else:
                     prev_position = None
                     velocity = 0
