@@ -1,6 +1,7 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+from cvzone.SelfiSegmentationModule import SelfiSegmentation
 from PIL import Image
 
 # Инициализация mediapipe для отслеживания рук и лица
@@ -168,7 +169,7 @@ def rotate_image(image, angle):
     return image.rotate(angle, expand=True)
 
 # Функция для обработки шляп
-def handle_face_and_second_wheel(combined_image, face_results, selected_image, img_width, img_height,images):
+def handle_face_and_second_wheel(frame_copy, face_results, selected_image, img_width, img_height,images):
     if face_results.multi_face_landmarks and selected_image is not None and int(second_wheel_position) % len(images) != 0:
         for face_landmarks in face_results.multi_face_landmarks:
             # Координаты ключевых точек
@@ -239,11 +240,11 @@ def handle_face_and_second_wheel(combined_image, face_results, selected_image, i
                     hat_x1 += int(hat_width * 0.035)  # Сдвиг влево
 
                 # Наложение шляпы на изображение
-                combined_image = overlay_hat(combined_image, rotated_hat, hat_x1, hat_y1)
+                frame_copy = overlay_hat(frame_copy, rotated_hat, hat_x1, hat_y1)
             else:
                 print(f"Invalid hat dimensions: width = {hat_width}, height = {hat_height}")
 
-        return combined_image
+        return frame_copy
 
 # Функция для удаления фона
 def remove_background(image):
@@ -276,8 +277,23 @@ def remove_background(image):
 
         return transparent_background
 
-# Функции для изменения яркости и контрастности
+# Функция для замены фона
+def overlay_background(image, background_image):
+    segmentor = SelfiSegmentation()
 
+    # Изменяем размер background_image до размера image
+    background_image_resized = cv2.resize(background_image, (image.shape[1], image.shape[0]))
+
+    # Убедимся, что у обоих изображений три канала
+    if image.shape[2] == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+    if background_image_resized.shape[2] == 4:
+        background_image_resized = cv2.cvtColor(background_image_resized, cv2.COLOR_BGRA2BGR)
+
+    img_out = segmentor.removeBG(image, background_image_resized)
+    return img_out
+
+# Функции для изменения яркости и контрастности
 def change_brightness(image, value):
     value -= 40
     value = max(-50, min(value * 0.5, 50))
@@ -331,9 +347,9 @@ def apply_edge_blur(image, blur_radius):
     blurred_image = cv2.GaussianBlur(image, (2*blur_radius+1, 2*blur_radius+1), 0)
 
     # Комбинирование исходного изображения и размытого изображения с использованием маски
-    combined_image = cv2.bitwise_and(image, mask) + cv2.bitwise_and(blurred_image, inverted_mask)
+    frame_copy = cv2.bitwise_and(image, mask) + cv2.bitwise_and(blurred_image, inverted_mask)
 
-    return combined_image
+    return frame_copy
 
 # Загрузка изображения
 frame = cv2.imread('screenshot.png', cv2.IMREAD_UNCHANGED)
@@ -434,15 +450,23 @@ with mp_hands.Hands(
 
         # Если выбран режим Bg
         if int(wheel_position) % len(resized_images) == 1:
-            frame_copy = remove_background(frame_copy)
             show_fourth_wheel = True
             fourth_wheel_image = draw_wheel(frame_copy, fourth_wheel_position, bg_images)
             frame_copy = overlay_panel(frame_copy, fourth_wheel_image, 0, 0, 1)
-            if int(fourth_wheel_position) % len(loaded_bg_images) != 0:
-                selected_image = loaded_bg_images[int(fourth_wheel_position) % len(loaded_bg_images)]
-                frame_copy = overlay_background(frame_copy, selected_image)
         else:
             show_fourth_wheel = False
+
+        frame_copy = change_brightness(frame_copy, brightness_value)
+        frame_copy = change_contrast(frame_copy, contrast_value)
+
+        if int(fourth_wheel_position) % len(loaded_bg_images) != 0:
+            frame_copy = overlay_background(frame_copy,
+                                            loaded_bg_images[int(fourth_wheel_position) % len(loaded_bg_images)])
+
+        frame_copy = apply_edge_blur(frame_copy, blur_radius)
+
+        handle_face_and_second_wheel(frame_copy, face_results, selected_image, img_width, img_height,
+                                     resized_images)
 
         # Отображение точки на кончике указательного пальца
         if hand_results.multi_hand_landmarks:
@@ -488,16 +512,15 @@ with mp_hands.Hands(
                     prev_position = None
                     velocity = 0
 
-        combined_image = apply_edge_blur(frame_copy, blur_radius)
         # Отображение первого колеса
         wheel_image = draw_vertical_wheel(frame_copy, wheel_position)
-        combined_image = overlay_panel(combined_image, wheel_image, 0, 0, 1)
+        frame_copy = overlay_panel(frame_copy, wheel_image, 0, 0, 1)
 
         # Если выбран режим Hats
         if int(wheel_position) % len(resized_images) == 0:
             show_second_wheel = True
             second_wheel_image = draw_wheel(frame_copy, second_wheel_position, resized_images)
-            combined_image = overlay_panel(combined_image, second_wheel_image, 0, 0, 1)
+            frame_copy = overlay_panel(frame_copy, second_wheel_image, 0, 0, 1)
         else:
             show_second_wheel = False
 
@@ -505,10 +528,10 @@ with mp_hands.Hands(
         if int(wheel_position) % len(resized_images) == 2:
             show_third_wheel = True
             third_wheel_image = draw_wheel(frame_copy, third_wheel_position, effect_images)
-            combined_image = overlay_panel(combined_image, third_wheel_image, 0, 0, 1)
+            frame_copy = overlay_panel(frame_copy, third_wheel_image, 0, 0, 1)
             # Добавление изображения scale.png, если третее колесо открыто на 0 или 1
             if int(third_wheel_position) % len(effect_images) in [0, 1, 2]:
-                combined_image = overlay_panel(combined_image, resized_scale_image, 200, 400, 1)
+                frame_copy = overlay_panel(frame_copy, resized_scale_image, 200, 400, 1)
                 # Получение положения руки для изменения параметров
                 if hand_results.multi_hand_landmarks:
                     for hand_landmarks in hand_results.multi_hand_landmarks:
@@ -521,21 +544,16 @@ with mp_hands.Hands(
                             elif int(third_wheel_position) % len(effect_images) == 2:
                                 blur_radius = int((hand_position * 2 - 1) * 150)
             if int(third_wheel_position) % len(effect_images) == 0:
-                combined_image = draw_scale_with_point(combined_image, brightness_value)
+                frame_copy = draw_scale_with_point(frame_copy, brightness_value)
             elif int(third_wheel_position) % len(effect_images) == 1:
-                combined_image = draw_scale_with_point(combined_image, contrast_value)
+                frame_copy = draw_scale_with_point(frame_copy, contrast_value)
             elif int(third_wheel_position) % len(effect_images) == 2:
-                combined_image = draw_scale_with_point(combined_image, blur_radius)
+                frame_copy = draw_scale_with_point(frame_copy, blur_radius)
         else:
             show_third_wheel = False
 
-        combined_image = change_brightness(combined_image, brightness_value)
-        combined_image = change_contrast(combined_image, contrast_value)
-
-        handle_face_and_second_wheel(combined_image, face_results, selected_image, img_width, img_height, resized_images)
-
         cv2.imshow('view', image)
-        cv2.imshow('Drawing_project', combined_image)
+        cv2.imshow('Drawing_project', frame_copy)
 
         if cv2.waitKey(5) & 0xFF == 27:
             break
