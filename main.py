@@ -448,14 +448,6 @@ with mp_hands.Hands(
         # Копируем оригинальный кадр для обновления изображения
         frame_copy = frame.copy()
 
-        # Если выбран режим Bg
-        if int(wheel_position) % len(resized_images) == 1:
-            show_fourth_wheel = True
-            fourth_wheel_image = draw_wheel(frame_copy, fourth_wheel_position, bg_images)
-            frame_copy = overlay_panel(frame_copy, fourth_wheel_image, 0, 0, 1)
-        else:
-            show_fourth_wheel = False
-
         frame_copy = change_brightness(frame_copy, brightness_value)
         frame_copy = change_contrast(frame_copy, contrast_value)
 
@@ -523,6 +515,14 @@ with mp_hands.Hands(
             frame_copy = overlay_panel(frame_copy, second_wheel_image, 0, 0, 1)
         else:
             show_second_wheel = False
+
+        # Если выбран режим Bg
+        if int(wheel_position) % len(resized_images) == 1:
+            show_fourth_wheel = True
+            fourth_wheel_image = draw_wheel(frame_copy, fourth_wheel_position, bg_images)
+            frame_copy = overlay_panel(frame_copy, fourth_wheel_image, 0, 0, 1)
+        else:
+            show_fourth_wheel = False
 
         # Если выбран режим Effects
         if int(wheel_position) % len(resized_images) == 2:
