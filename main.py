@@ -23,19 +23,18 @@ def is_fist(landmarks):
     return True
 
 # Функция для обновления положения колеса
-def update_wheel_position(position, velocity):
+def update_wheel_position(position, velocity, positions):
     position += velocity
-    position %= 4  # Всего позиций на колесе
+    position %= positions  # Всего позиций на колесе
     return position
 
 # Функция для отрисовки вертикального колеса
-def draw_vertical_wheel(image, position):
-    positions = ['Hats', 'Bg', 'Effects', 'Result']
+def draw_vertical_wheel(image, position, positions):
     center_index = int(position) % len(positions)
     wheel_image = np.zeros((image.shape[0], image.shape[1], 4), dtype=np.uint8)
     font = cv2.FONT_HERSHEY_SIMPLEX
 
-    for i in range(-1,2):
+    for i in range(-1, 2):
         pos_index = (center_index + i) % len(positions)
         text = positions[pos_index]
         x_offset = 30
@@ -196,14 +195,14 @@ def handle_face_and_second_wheel(frame_copy, face_results, selected_image, img_w
             dx = nose_x - chin_x
             dy = nose_y - chin_y
             if int(second_wheel_position) % len(images) == 2:
-                head_top_x = chin_x + int(1.75 * dx)
-                head_top_y = chin_y + int(1.75 * dy)
-            elif int(second_wheel_position) % len(images) == 4:
-                head_top_x = chin_x + int(2.25 * dx)
-                head_top_y = chin_y + int(2.25 * dy)
-            else:
                 head_top_x = chin_x + int(2 * dx)
                 head_top_y = chin_y + int(2 * dy)
+            elif int(second_wheel_position) % len(images) == 3:
+                head_top_x = chin_x + int(2.5 * dx)
+                head_top_y = chin_y + int(2.5 * dy)
+            else:
+                head_top_x = chin_x + int(2.25 * dx)
+                head_top_y = chin_y + int(2.25 * dy)
 
             # Масштабирование шляпы до ширины головы
             if int(second_wheel_position) % len(images) == 2:
@@ -381,6 +380,7 @@ brightness_value = 40  # Текущая яркость
 contrast_value = 40  # Текущая контрастность
 blur_radius = 1  # Радиус размытия
 
+positions = ['Hats', 'Bg', 'Effects', 'Result']
 # Загрузка изображений высокого разрешения
 image_folder = 'head'
 image_paths = [f'{image_folder}/1.png', f'{image_folder}/2.png', f'{image_folder}/3.png', f'{image_folder}/4.png', f'{image_folder}/5.png']
@@ -474,13 +474,13 @@ with mp_hands.Hands(
                         if prev_position is not None:
                             # формула для вычисления скорости
                             velocity = (point_coords[1] - prev_position[1]) / -100.0
-                            wheel_position = update_wheel_position(wheel_position, velocity)
+                            wheel_position = update_wheel_position(wheel_position, velocity, len(positions))
                         prev_position = point_coords
                     elif show_second_wheel and point_coords[1] < frame.shape[0] // 4:
                         if prev_position is not None:
                             # формула для вычисления скорости
                             velocity = (point_coords[0] - prev_position[0]) / -100.0
-                            second_wheel_position = update_wheel_position(second_wheel_position, velocity)
+                            second_wheel_position = update_wheel_position(second_wheel_position, velocity, len(loaded_images))
                         prev_position = point_coords
                         # Запоминаем выбранное изображение для отображения
                         selected_image = loaded_images[int(second_wheel_position) % len(loaded_images)]
@@ -488,28 +488,24 @@ with mp_hands.Hands(
                         if prev_position is not None:
                             # формула для вычисления скорости
                             velocity = (point_coords[0] - prev_position[0]) / -100.0
-                            third_wheel_position = update_wheel_position(third_wheel_position, velocity)
+                            third_wheel_position = update_wheel_position(third_wheel_position, velocity, len(effect_images))
                         prev_position = point_coords
-                        # Запоминаем выбранное изображение для отображения
-                        selected_image = loaded_effect_images[int(third_wheel_position) % len(loaded_effect_images)]
                     elif show_fourth_wheel and point_coords[1] < frame.shape[0] // 4:
                         if prev_position is not None:
                             # формула для вычисления скорости
                             velocity = (point_coords[0] - prev_position[0]) / -100.0
-                            fourth_wheel_position = update_wheel_position(fourth_wheel_position, velocity)
+                            fourth_wheel_position = update_wheel_position(fourth_wheel_position, velocity, len(bg_images))
                         prev_position = point_coords
-                        # Запоминаем выбранное изображение для отображения
-                        selected_image = loaded_bg_images[int(fourth_wheel_position) % len(loaded_bg_images)]
-                else:
-                    prev_position = None
-                    velocity = 0
+                    else:
+                        prev_position = None
+                        velocity = 0
 
         # Отображение первого колеса
-        wheel_image = draw_vertical_wheel(frame_copy, wheel_position)
+        wheel_image = draw_vertical_wheel(frame_copy, wheel_position, positions)
         frame_copy = overlay_panel(frame_copy, wheel_image, 0, 0, 1)
 
         # Если выбран режим Hats
-        if int(wheel_position) % len(resized_images) == 0:
+        if int(wheel_position) % len(positions) == 0:
             show_second_wheel = True
             second_wheel_image = draw_wheel(frame_copy, second_wheel_position, resized_images)
             frame_copy = overlay_panel(frame_copy, second_wheel_image, 0, 0, 1)
@@ -517,7 +513,7 @@ with mp_hands.Hands(
             show_second_wheel = False
 
         # Если выбран режим Bg
-        if int(wheel_position) % len(resized_images) == 1:
+        if int(wheel_position) % len(positions) == 1:
             show_fourth_wheel = True
             fourth_wheel_image = draw_wheel(frame_copy, fourth_wheel_position, bg_images)
             frame_copy = overlay_panel(frame_copy, fourth_wheel_image, 0, 0, 1)
@@ -525,7 +521,7 @@ with mp_hands.Hands(
             show_fourth_wheel = False
 
         # Если выбран режим Effects
-        if int(wheel_position) % len(resized_images) == 2:
+        if int(wheel_position) % len(positions) == 2:
             show_third_wheel = True
             third_wheel_image = draw_wheel(frame_copy, third_wheel_position, effect_images)
             frame_copy = overlay_panel(frame_copy, third_wheel_image, 0, 0, 1)

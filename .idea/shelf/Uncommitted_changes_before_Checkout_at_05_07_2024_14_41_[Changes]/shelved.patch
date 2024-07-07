@@ -1,0 +1,250 @@
+Index: main.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import cv2\r\nimport mediapipe as mp\r\nimport numpy as np\r\nfrom PIL import Image\r\n\r\n# Инициализация mediapipe для отслеживания рук и лица\r\nmp_hands = mp.solutions.hands\r\nmp_face_mesh = mp.solutions.face_mesh\r\nmp_drawing = mp.solutions.drawing_utils\r\nmp_selfie_segmentation = mp.solutions.selfie_segmentation\r\n\r\n\r\n# Функция для вычисления координат указательного пальца\r\ndef get_index_finger_tip(landmarks, image):\r\n    return (int(landmarks[8].x * image.shape[1]), int(landmarks[8].y * image.shape[0]))\r\n\r\n# Функция для определения, сжата ли рука в кулак\r\ndef is_fist(landmarks):\r\n    for i in [8, 12, 16, 20]:  # Кончики пальцев\r\n        if landmarks[i].y < landmarks[i - 3].y:\r\n            return False\r\n    return True\r\n\r\n# Функция для обновления положения колеса\r\ndef update_wheel_position(position, velocity):\r\n    position += velocity\r\n    position %= 4  # Всего позиций на колесе\r\n    return position\r\n\r\n# Функция для отрисовки вертикального колеса\r\ndef draw_vertical_wheel(image, position):\r\n    positions = ['Hats', 'Bg', 'Effects', 'Result']\r\n    center_index = int(position) % len(positions)\r\n    wheel_image = np.zeros((image.shape[0], image.shape[1], 4), dtype=np.uint8)\r\n    font = cv2.FONT_HERSHEY_SIMPLEX\r\n\r\n    for i in range(-1,2):\r\n        pos_index = (center_index + i) % len(positions)\r\n        text = positions[pos_index]\r\n        x_offset = 30\r\n        if i == 0:\r\n            color = (0, 255, 0, 255)\r\n            scale = 1.5\r\n            thickness = 3\r\n        else:\r\n            color = (128, 128, 128, 255)\r\n            scale = 1\r\n            thickness = 1\r\n\r\n        y_pos = image.shape[0] // 3 + i * 60\r\n        x_pos = x_offset\r\n        cv2.putText(wheel_image, text, (x_pos, y_pos), font, scale, color, thickness)\r\n\r\n    return wheel_image\r\n\r\n# Функция для загрузки и масштабирования изображения\r\ndef load_image(path):\r\n    image = Image.open(path)\r\n    # Преобразование изображения в 4-канальный формат с альфа-каналом\r\n    image = image.convert(\"RGBA\")\r\n    np.array(image)\r\n    # Преобразование изображения в массив NumPy\r\n    image_array = np.array(image)\r\n    # Перестановка каналов для получения формата BGRA\r\n    image_array = image_array[..., [2, 1, 0, 3]]\r\n    return image_array\r\n\r\n# Функция для уменьшения изображения для колеса\r\ndef resize_image(image, width, height):\r\n    pil_image = Image.fromarray(image)\r\n    pil_image = pil_image.resize((width, height), Image.Resampling.LANCZOS)\r\n    return np.array(pil_image)\r\n\r\n# Функция для отрисовки горизонтального колеса с изображениями\r\ndef draw_wheel(image, position, images):\r\n    center_index = int(position) % len(images)\r\n    wheel_image = np.zeros((image.shape[0], image.shape[1], 4), dtype=np.uint8)\r\n\r\n    for i in range(-2, 3):\r\n        pos_index = (center_index + i) % len(images)\r\n        icon_image = images[pos_index]\r\n        if i == 0:\r\n            scale = 1.0\r\n            y_offset = 60\r\n        elif abs(i) == 1:\r\n            scale = 1 / 1.5\r\n            y_offset = 50\r\n        else:\r\n            scale = 1 / (1.5 * 1.5)\r\n            y_offset = 40\r\n\r\n        x_offset = 50\r\n        y_pos = y_offset\r\n        x_pos = x_offset + image.shape[1] // 2 + i * 100\r\n\r\n        wheel_icon_resized = cv2.resize(icon_image, (0, 0), fx=scale, fy=scale)\r\n        ih, iw, _ = wheel_icon_resized.shape\r\n        x1, y1 = x_pos - iw // 2, y_pos - ih // 2\r\n        x2, y2 = x1 + iw, y1 + ih\r\n\r\n        # Проверка и добавление альфа-канала, если его нет\r\n        if wheel_icon_resized.shape[2] == 3:\r\n            wheel_icon_resized = cv2.cvtColor(wheel_icon_resized, cv2.COLOR_BGR2BGRA)\r\n\r\n        # Добавляем прозрачность к изображению колеса\r\n        alpha_foreground = wheel_icon_resized[:, :, 3] / 255.0\r\n        alpha_background = 1.0 - alpha_foreground\r\n\r\n        for c in range(0, 3):\r\n            wheel_image[y1:y2, x1:x2, c] = (\r\n                alpha_foreground * wheel_icon_resized[:, :, c] +\r\n                alpha_background * wheel_image[y1:y2, x1:x2, c]\r\n            )\r\n\r\n        wheel_image[y1:y2, x1:x2, 3] = alpha_foreground * 255\r\n\r\n    return wheel_image\r\n\r\n# Функция для альфа-блендинга\r\ndef alpha_blend(foreground, background, x_offset, y_offset):\r\n    fg_h, fg_w, _ = foreground.shape\r\n    bg_h, bg_w, _ = background.shape\r\n\r\n    if x_offset + fg_w > bg_w or y_offset + fg_h > bg_h:\r\n        raise ValueError(\"Изображение переднего плана выходит за границы фона\")\r\n\r\n    alpha_foreground = foreground[:, :, 3] / 255.0\r\n    alpha_background = 1.0 - alpha_foreground\r\n\r\n    for c in range(0, 3):\r\n        background[y_offset:y_offset+fg_h, x_offset:x_offset+fg_w, c] = (\r\n            alpha_foreground * foreground[:, :, c] +\r\n            alpha_background * background[y_offset:y_offset+fg_h, x_offset:x_offset+fg_w, c]\r\n        )\r\n\r\n    return background\r\n\r\n# Функция для наложения панели с альфа-блендингом\r\ndef overlay_panel(frame, panel_img, x, y, scale=1):\r\n    panel_img_resized = cv2.resize(panel_img, (0, 0), fx=scale, fy=scale)\r\n    panel_h, panel_w, _ = panel_img_resized.shape\r\n\r\n    # Проверка и добавление альфа-канала, если его нет\r\n    if frame.shape[2] == 3:\r\n        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)\r\n\r\n    return alpha_blend(panel_img_resized, frame, x, y)\r\n\r\n# Функция для наложения изображения шляпы без обрезания\r\ndef overlay_hat(image, hat_image, x, y):\r\n    ih, iw, _ = hat_image.shape\r\n    bg_h, bg_w, _ = image.shape\r\n\r\n    if x < 0 or y < 0 or x + iw > bg_w or y + ih > bg_h:\r\n        return image  # если изображение шляпы выходит за границы кадра, не накладывать\r\n\r\n    alpha_hat = hat_image[:, :, 3] / 255.0\r\n    alpha_image = 1.0 - alpha_hat\r\n\r\n    for c in range(0, 3):\r\n        image[y:y+ih, x:x+iw, c] = (alpha_hat * hat_image[:, :, c] +\r\n                                    alpha_image * image[y:y+ih, x:x+iw, c])\r\n\r\n    return image\r\n\r\n# Поворот шляпы\r\ndef rotate_image(image, angle):\r\n    return image.rotate(angle, expand=True)\r\n\r\n# Функция для обработки шляп\r\ndef handle_face_and_second_wheel(combined_image, face_results, selected_image, img_width, img_height,images):\r\n    if face_results.multi_face_landmarks and selected_image is not None and int(second_wheel_position) % len(images) != 0:\r\n        for face_landmarks in face_results.multi_face_landmarks:\r\n            # Координаты ключевых точек\r\n            chin_landmark = face_landmarks.landmark[152]  # Подбородок\r\n            nose_landmark = face_landmarks.landmark[1]  # Нос\r\n            left_ear_landmark = face_landmarks.landmark[234]  # Левое ухо\r\n            right_ear_landmark = face_landmarks.landmark[454]  # Правое ухо\r\n            left_eye_landmark = face_landmarks.landmark[33]  # Левый глаз\r\n            right_eye_landmark = face_landmarks.landmark[263]  # Правый глаз\r\n\r\n            # Преобразование относительных координат в абсолютные\r\n            chin_x = int(chin_landmark.x * img_width)\r\n            chin_y = int(chin_landmark.y * img_height)\r\n            nose_x = int(nose_landmark.x * img_width)\r\n            nose_y = int(nose_landmark.y * img_height)\r\n            left_ear_x = int(left_ear_landmark.x * img_width)\r\n            right_ear_x = int(right_ear_landmark.x * img_width)\r\n            left_eye_x = int(left_eye_landmark.x * img_width)\r\n            left_eye_y = int(left_eye_landmark.y * img_height)\r\n            right_eye_x = int(right_eye_landmark.x * img_width)\r\n            right_eye_y = int(right_eye_landmark.y * img_height)\r\n\r\n            # Определение верхушки головы\r\n            dx = nose_x - chin_x\r\n            dy = nose_y - chin_y\r\n            if int(second_wheel_position) % len(images) == 2:\r\n                head_top_x = chin_x + int(1.75 * dx)\r\n                head_top_y = chin_y + int(1.75 * dy)\r\n            elif int(second_wheel_position) % len(images) == 4:\r\n                head_top_x = chin_x + int(2.25 * dx)\r\n                head_top_y = chin_y + int(2.25 * dy)\r\n            else:\r\n                head_top_x = chin_x + int(2 * dx)\r\n                head_top_y = chin_y + int(2 * dy)\r\n\r\n            # Масштабирование шляпы до ширины головы\r\n            if int(second_wheel_position) % len(images) == 2:\r\n                hat_width = int((right_ear_x - left_ear_x) * 1.2)\r\n            elif int(second_wheel_position) % len(images) == 4:\r\n                hat_width = int((right_ear_x - left_ear_x) * 1.5)\r\n            else:\r\n                hat_width = int((right_ear_x - left_ear_x) * 1.35)\r\n            hat_height = int(selected_image.shape[0] * (hat_width / selected_image.shape[1]))\r\n\r\n            # Проверка на то, что ширина и высота не нулевые или отрицательные\r\n            if hat_width > 0 and hat_height > 0:\r\n                # Изменение размера шляпы с использованием Pillow\r\n                hat_image_pil = Image.fromarray(cv2.cvtColor(selected_image, cv2.COLOR_BGRA2RGBA))\r\n                hat_resized_pil = hat_image_pil.resize((hat_width, hat_height), Image.Resampling.LANCZOS)\r\n\r\n                # Вычисление угла наклона шляпы\r\n                eye_dx = right_eye_x - left_eye_x\r\n                eye_dy = right_eye_y - left_eye_y\r\n                angle = -np.degrees(np.arctan2(eye_dy, eye_dx))\r\n\r\n                # Поворот шляпы с использованием функции rotate_image\r\n                rotated_hat_pil = rotate_image(hat_resized_pil, angle)\r\n                rotated_hat = cv2.cvtColor(np.array(rotated_hat_pil), cv2.COLOR_RGBA2BGRA)\r\n\r\n                # Координаты для размещения шляпы\r\n                hat_x1 = head_top_x - rotated_hat.shape[1] // 2\r\n                hat_y1 = head_top_y - rotated_hat.shape[0]\r\n\r\n                # Сдвиг шляпы в зависимости от угла поворота\r\n                if angle > 0:\r\n                    hat_x1 -= int(hat_width * 0.035)  # Сдвиг вправо\r\n                elif angle < 0:\r\n                    hat_x1 += int(hat_width * 0.035)  # Сдвиг влево\r\n\r\n                # Наложение шляпы на изображение\r\n                combined_image = overlay_hat(combined_image, rotated_hat, hat_x1, hat_y1)\r\n            else:\r\n                print(f\"Invalid hat dimensions: width = {hat_width}, height = {hat_height}\")\r\n\r\n        return combined_image\r\n\r\n# Функция для удаления фона\r\ndef remove_background(image):\r\n    mp_selfie_segmentation = mp.solutions.selfie_segmentation\r\n\r\n    with mp_selfie_segmentation.SelfieSegmentation(model_selection=1) as selfie_segmentation:\r\n        # Преобразование изображения из BGR в RGB\r\n        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)\r\n        results = selfie_segmentation.process(rgb_image)\r\n\r\n        # Получение маски сегментации\r\n        mask = results.segmentation_mask\r\n\r\n        # Улучшение маски\r\n        mask = (mask > 0.1).astype(np.uint8)  # Бинаризация маски\r\n        mask = cv2.GaussianBlur(mask, (5, 5), 0)  # Размытие маски для сглаживания краев\r\n\r\n        # Преобразование изображения в формат RGBA\r\n        rgba_image = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)\r\n\r\n        # Создание нового изображения с черным фоном (4 канала)\r\n        bg_image = np.zeros(rgba_image.shape, dtype=np.uint8)\r\n\r\n        # Маскирование изображения\r\n        for c in range(4):  # Применение маски к каждому каналу\r\n            rgba_image[:, :, c] = rgba_image[:, :, c] * mask\r\n\r\n        # Объединение исходного изображения и фона\r\n        transparent_background = np.where(np.stack((mask,) * 4, axis=-1) > 0, rgba_image, bg_image)\r\n\r\n        return transparent_background\r\n\r\n# Функции для изменения яркости и контрастности\r\n\r\ndef change_brightness(image, value):\r\n    value -= 40\r\n    value = max(-50, min(value * 0.5, 50))\r\n    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)\r\n    h, s, v = cv2.split(hsv)\r\n    v = cv2.add(v, value)\r\n    v = np.clip(v, 0, 255)\r\n    final_hsv = cv2.merge((h, s, v))\r\n    image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)\r\n    return image\r\n\r\ndef change_contrast(image, value):\r\n    value -= 40\r\n    value = max(-50, min(value * 0.5, 50))\r\n    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)\r\n    l, a, b = cv2.split(lab)\r\n    l = cv2.add(l, value)\r\n    l = np.clip(l, 0, 255)\r\n    final_lab = cv2.merge((l, a, b))\r\n    image = cv2.cvtColor(final_lab, cv2.COLOR_LAB2BGR)\r\n    return image\r\n\r\ndef draw_scale_with_point(scale_image, value):\r\n    point_radius = 8\r\n    scale_height, scale_width, _ = scale_image.shape\r\n    position = (value + 150) / 300\r\n    point_x = int(scale_width * position)\r\n    point_x = int(max(0.322 * scale_width, min(point_x, 0.938 * scale_width)))\r\n    point_y = int(scale_height * 0.846)\r\n    cv2.circle(scale_image, (point_x, point_y), point_radius, (0, 0, 0), -1)\r\n    return scale_image\r\n\r\ndef apply_edge_blur(image, blur_radius):\r\n    if blur_radius <= 0:\r\n        return image\r\n\r\n    # Создание маски с такими же размерами, как и изображение\r\n    mask = np.zeros_like(image)\r\n\r\n    # Определение центра и радиуса круга\r\n    center = (mask.shape[1] // 2, mask.shape[0] // 2)\r\n    radius = min(center[0], center[1]) - blur_radius\r\n\r\n    # Рисование белого круга в середине маски\r\n    cv2.circle(mask, center, radius, (255, 255, 255), -1)\r\n\r\n    # Инвертирование маски\r\n    inverted_mask = cv2.bitwise_not(mask)\r\n\r\n    # Размытие всего изображения\r\n    blurred_image = cv2.GaussianBlur(image, (2*blur_radius+1, 2*blur_radius+1), 0)\r\n\r\n    # Комбинирование исходного изображения и размытого изображения с использованием маски\r\n    combined_image = cv2.bitwise_and(image, mask) + cv2.bitwise_and(blurred_image, inverted_mask)\r\n\r\n    return combined_image\r\n\r\n# Загрузка изображения\r\nframe = cv2.imread('screenshot.png', cv2.IMREAD_UNCHANGED)\r\n\r\n# Проверяем, что изображение было успешно загружено\r\nif frame is None:\r\n    print(\"Изображение не найдено\")\r\n    exit()\r\n\r\nif frame.shape[2] == 4:\r\n    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)\r\n\r\n# Инициализация камеры\r\ncap = cv2.VideoCapture(0)\r\n\r\n# Переменные для отслеживания положения и скорости движения\r\nprev_position = None\r\nwheel_position = 0\r\nvelocity = 0\r\nsecond_wheel_position = 0\r\nthird_wheel_position = 0\r\nshow_second_wheel = False\r\nshow_third_wheel = False\r\nselected_image = None\r\n\r\nbrightness_value = 40  # Текущая яркость\r\ncontrast_value = 40  # Текущая контрастность\r\nblur_radius = 1  # Радиус размытия\r\n\r\n# Загрузка изображений высокого разрешения\r\nimage_folder = 'head'\r\nimage_paths = [f'{image_folder}/1.png', f'{image_folder}/2.png', f'{image_folder}/3.png', f'{image_folder}/4.png', f'{image_folder}/5.png']\r\nloaded_images = [load_image(path) for path in image_paths]\r\n\r\nresized_images = [\r\n    resize_image(loaded_images[0], 50, 50),\r\n    resize_image(loaded_images[1], 50, 50),\r\n    resize_image(loaded_images[2], 75, 50),\r\n    resize_image(loaded_images[3], 50, 50),\r\n    resize_image(loaded_images[4], 50, 50)\r\n]\r\n\r\nimage_folder = 'effects'\r\nimage_paths = [f'{image_folder}/1.png', f'{image_folder}/2.png', f'{image_folder}/3.png']\r\nloaded_effect_images = [load_image(path) for path in image_paths]\r\n\r\neffect_images = [\r\n    resize_image(loaded_effect_images[0], 50, 50),\r\n    resize_image(loaded_effect_images[1], 50, 50),\r\n    resize_image(loaded_effect_images[2], 50, 75)\r\n]\r\n\r\nscale_image = load_image('scale.png')\r\nresized_scale_image = resize_image(scale_image, 400, 15)\r\n\r\n# Инициализация MediaPipe для отслеживания рук и лица\r\nwith mp_hands.Hands(\r\n        static_image_mode=False,\r\n        max_num_hands=1,\r\n        min_detection_confidence=0.7,\r\n        min_tracking_confidence=0.7) as hands,mp_face_mesh.FaceMesh(\r\n        static_image_mode=False,\r\n        max_num_faces=1,\r\n        refine_landmarks=True,\r\n        min_detection_confidence=0.5,\r\n        min_tracking_confidence=0.5) as face_mesh:\r\n    while cap.isOpened():\r\n        success, image = cap.read()\r\n        if not success:\r\n            print(\"Камера не найдена\")\r\n            continue\r\n\r\n        # Отзеркаливание изображения по горизонтали\r\n        image = cv2.flip(image, 1)\r\n\r\n        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)\r\n        hand_results = hands.process(image)\r\n        face_results = face_mesh.process(frame)\r\n        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)\r\n\r\n        img_height, img_width, _ = image.shape\r\n\r\n        # Копируем оригинальный кадр для обновления изображения\r\n        frame_copy = frame.copy()\r\n\r\n        # Если выбран режим Bg\r\n        if int(wheel_position) % len(resized_images) == 1:\r\n            frame_copy = remove_background(frame_copy)\r\n\r\n        # Отображение точки на кончике указательного пальца\r\n        if hand_results.multi_hand_landmarks:\r\n            for hand_landmarks in hand_results.multi_hand_landmarks:\r\n                index_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]\r\n                point_coords = (int(index_tip.x * img_width), int(index_tip.y * img_height))\r\n                cv2.circle(frame_copy, point_coords, 10, (0, 0, 255), -1)  # Красная точка на кончике пальца\r\n\r\n                # Проверяем, сжата ли рука в кулак и находится ли рука слева\r\n                if is_fist(hand_landmarks.landmark):\r\n                    print(\"Кулак обнаружен\")\r\n                    if point_coords[0] < frame.shape[1] // 4:\r\n                        if prev_position is not None:\r\n                            # формула для вычисления скорости\r\n                            velocity = (point_coords[1] - prev_position[1]) / -100.0\r\n                            wheel_position = update_wheel_position(wheel_position, velocity)\r\n                        prev_position = point_coords\r\n                    elif show_second_wheel and point_coords[1] < frame.shape[0] // 4:\r\n                        if prev_position is not None:\r\n                            # формула для вычисления скорости\r\n                            velocity = (point_coords[0] - prev_position[0]) / -100.0\r\n                            second_wheel_position = update_wheel_position(second_wheel_position, velocity)\r\n                        prev_position = point_coords\r\n                        # Запоминаем выбранное изображение для отображения\r\n                        selected_image = loaded_images[int(second_wheel_position) % len(loaded_images)]\r\n                    elif show_third_wheel and point_coords[1] < frame.shape[0] // 4:\r\n                        if prev_position is not None:\r\n                            # формула для вычисления скорости\r\n                            velocity = (point_coords[0] - prev_position[0]) / -100.0\r\n                            third_wheel_position = update_wheel_position(third_wheel_position, velocity)\r\n                        prev_position = point_coords\r\n                        # Запоминаем выбранное изображение для отображения\r\n                        selected_image = loaded_effect_images[int(third_wheel_position) % len(loaded_effect_images)]\r\n                else:\r\n                    prev_position = None\r\n                    velocity = 0\r\n\r\n        combined_image = apply_edge_blur(frame_copy, blur_radius)\r\n        # Отображение первого колеса\r\n        wheel_image = draw_vertical_wheel(frame_copy, wheel_position)\r\n        combined_image = overlay_panel(combined_image, wheel_image, 0, 0, 1)\r\n\r\n        # Если выбран режим Hats\r\n        if int(wheel_position) % len(resized_images) == 0:\r\n            show_second_wheel = True\r\n            second_wheel_image = draw_wheel(frame_copy, second_wheel_position, resized_images)\r\n            combined_image = overlay_panel(combined_image, second_wheel_image, 0, 0, 1)\r\n        else:\r\n            show_second_wheel = False\r\n\r\n        # Если выбран режим Effects\r\n        if int(wheel_position) % len(resized_images) == 2:\r\n            show_third_wheel = True\r\n            third_wheel_image = draw_wheel(frame_copy, third_wheel_position, effect_images)\r\n            combined_image = overlay_panel(combined_image, third_wheel_image, 0, 0, 1)\r\n            # Добавление изображения scale.png, если третее колесо открыто на 0 или 1\r\n            if int(third_wheel_position) % len(effect_images) in [0, 1, 2]:\r\n                combined_image = overlay_panel(combined_image, resized_scale_image, 200, 400, 1)\r\n                # Получение положения руки для изменения параметров\r\n                if hand_results.multi_hand_landmarks:\r\n                    for hand_landmarks in hand_results.multi_hand_landmarks:\r\n                        if is_fist(hand_landmarks.landmark) and point_coords[1] > 3 * frame.shape[0] // 4:\r\n                            hand_position = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].x\r\n                            if int(third_wheel_position) % len(effect_images) == 0:\r\n                                brightness_value = int((hand_position * 2 - 1) * 150)\r\n                            elif int(third_wheel_position) % len(effect_images) == 1:\r\n                                contrast_value = int((hand_position * 2 - 1) * 150)\r\n                            elif int(third_wheel_position) % len(effect_images) == 2:\r\n                                blur_radius = int((hand_position * 2 - 1) * 150)\r\n            if int(third_wheel_position) % len(effect_images) == 0:\r\n                combined_image = draw_scale_with_point(combined_image, brightness_value)\r\n            elif int(third_wheel_position) % len(effect_images) == 1:\r\n                combined_image = draw_scale_with_point(combined_image, contrast_value)\r\n            elif int(third_wheel_position) % len(effect_images) == 2:\r\n                combined_image = draw_scale_with_point(combined_image, blur_radius)\r\n        else:\r\n            show_third_wheel = False\r\n\r\n        combined_image = change_brightness(combined_image, brightness_value)\r\n        combined_image = change_contrast(combined_image, contrast_value)\r\n\r\n        handle_face_and_second_wheel(combined_image, face_results, selected_image, img_width, img_height, resized_images)\r\n\r\n        cv2.imshow('view', image)\r\n        cv2.imshow('Drawing_project', combined_image)\r\n\r\n        if cv2.waitKey(5) & 0xFF == 27:\r\n            break\r\n\r\n    cap.release()\r\n    cv2.destroyAllWindows()
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/main.py b/main.py
+--- a/main.py	
++++ b/main.py	
+@@ -9,7 +9,6 @@
+ mp_drawing = mp.solutions.drawing_utils
+ mp_selfie_segmentation = mp.solutions.selfie_segmentation
+ 
+-
+ # Функция для вычисления координат указательного пальца
+ def get_index_finger_tip(landmarks, image):
+     return (int(landmarks[8].x * image.shape[1]), int(landmarks[8].y * image.shape[0]))
+@@ -22,14 +21,13 @@
+     return True
+ 
+ # Функция для обновления положения колеса
+-def update_wheel_position(position, velocity):
++def update_wheel_position(position, velocity, positions):
+     position += velocity
+-    position %= 4  # Всего позиций на колесе
++    position %= positions  # Всего позиций на колесе
+     return position
+ 
+ # Функция для отрисовки вертикального колеса
+-def draw_vertical_wheel(image, position):
+-    positions = ['Hats', 'Bg', 'Effects', 'Result']
++def draw_vertical_wheel(image, position,positions):
+     center_index = int(position) % len(positions)
+     wheel_image = np.zeros((image.shape[0], image.shape[1], 4), dtype=np.uint8)
+     font = cv2.FONT_HERSHEY_SIMPLEX
+@@ -245,37 +243,6 @@
+ 
+         return combined_image
+ 
+-# Функция для удаления фона
+-def remove_background(image):
+-    mp_selfie_segmentation = mp.solutions.selfie_segmentation
+-
+-    with mp_selfie_segmentation.SelfieSegmentation(model_selection=1) as selfie_segmentation:
+-        # Преобразование изображения из BGR в RGB
+-        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+-        results = selfie_segmentation.process(rgb_image)
+-
+-        # Получение маски сегментации
+-        mask = results.segmentation_mask
+-
+-        # Улучшение маски
+-        mask = (mask > 0.1).astype(np.uint8)  # Бинаризация маски
+-        mask = cv2.GaussianBlur(mask, (5, 5), 0)  # Размытие маски для сглаживания краев
+-
+-        # Преобразование изображения в формат RGBA
+-        rgba_image = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+-
+-        # Создание нового изображения с черным фоном (4 канала)
+-        bg_image = np.zeros(rgba_image.shape, dtype=np.uint8)
+-
+-        # Маскирование изображения
+-        for c in range(4):  # Применение маски к каждому каналу
+-            rgba_image[:, :, c] = rgba_image[:, :, c] * mask
+-
+-        # Объединение исходного изображения и фона
+-        transparent_background = np.where(np.stack((mask,) * 4, axis=-1) > 0, rgba_image, bg_image)
+-
+-        return transparent_background
+-
+ # Функции для изменения яркости и контрастности
+ 
+ def change_brightness(image, value):
+@@ -335,6 +302,62 @@
+ 
+     return combined_image
+ 
++# Функция для удаления фона
++def remove_background(frame):
++    with mp_selfie_segmentation.SelfieSegmentation(model_selection=1) as selfie_segmentation:
++        # Применение модели сегментации
++        results = selfie_segmentation.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
++
++        # Создание маски
++        mask = results.segmentation_mask
++
++        # Установка порога для создания бинарной маски
++        _, binary_mask = cv2.threshold(mask, 0.1, 1, cv2.THRESH_BINARY)
++        binary_mask = binary_mask.astype(np.uint8)
++
++        # Создание трехканальной маски
++        binary_mask_3d = np.dstack((binary_mask, binary_mask, binary_mask))
++
++        # Фон (можно изменить на любой цвет или изображение)
++        background = np.zeros_like(frame)
++
++        # Наложение маски на изображение
++        result = np.where(binary_mask_3d == 1, frame, background)
++
++    return result
++
++def overlay_background(frame_copy, selected_image, position=(0, 0)):
++    # Убедимся, что frame_copy имеет 4 канала (RGBA)
++    if frame_copy.shape[2] != 4:
++        raise ValueError("frame_copy должно иметь 4 канала (RGBA).")
++
++    # Извлекаем альфа-канал из frame_copy
++    alpha_mask = frame_copy[:, :, 3] / 255.0
++    alpha_inv = 1.0 - alpha_mask
++
++    # Получаем размер frame_copy
++    h, w, _ = frame_copy.shape
++
++    # Определяем область интереса (ROI) на выбранном изображении, куда будет помещен frame_copy
++    y1, y2 = position[1], position[1] + h
++    x1, x2 = position[0], position[0] + w
++
++    # Убедимся, что ROI находится в пределах размеров фонового изображения
++    if y2 > selected_image.shape[0] or x2 > selected_image.shape[1]:
++        raise ValueError("frame_copy выходит за пределы размеров фонового изображения.")
++
++    # Извлекаем ROI из фонового изображения
++    roi = selected_image[y1:y2, x1:x2]
++
++    # Смешиваем изображения
++    for c in range(0, 3):
++        roi[:, :, c] = (alpha_mask * frame_copy[:, :, c] + alpha_inv * roi[:, :, c])
++
++    # Помещаем смешанный ROI обратно в фоновое изображение
++    selected_image[y1:y2, x1:x2] = roi
++
++    return selected_image
++
+ # Загрузка изображения
+ frame = cv2.imread('screenshot.png', cv2.IMREAD_UNCHANGED)
+ 
+@@ -343,9 +366,6 @@
+     print("Изображение не найдено")
+     exit()
+ 
+-if frame.shape[2] == 4:
+-    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+-
+ # Инициализация камеры
+ cap = cv2.VideoCapture(0)
+ 
+@@ -355,14 +375,17 @@
+ velocity = 0
+ second_wheel_position = 0
+ third_wheel_position = 0
++fourth_wheel_position = 0
+ show_second_wheel = False
+ show_third_wheel = False
++show_fourth_wheel = False
+ selected_image = None
+ 
+ brightness_value = 40  # Текущая яркость
+ contrast_value = 40  # Текущая контрастность
+ blur_radius = 1  # Радиус размытия
+ 
++positions = ['Hats', 'Bg', 'Effects', 'Result']
+ # Загрузка изображений высокого разрешения
+ image_folder = 'head'
+ image_paths = [f'{image_folder}/1.png', f'{image_folder}/2.png', f'{image_folder}/3.png', f'{image_folder}/4.png', f'{image_folder}/5.png']
+@@ -386,6 +409,17 @@
+     resize_image(loaded_effect_images[2], 50, 75)
+ ]
+ 
++image_folder = 'background'
++image_paths = [f'{image_folder}/0.png', f'{image_folder}/1.jpg', f'{image_folder}/2.jpg', f'{image_folder}/3.jpg']
++loaded_bg_images = [load_image(path) for path in image_paths]
++
++bg_images = [
++    resize_image(loaded_bg_images[0], 50, 50),
++    resize_image(loaded_bg_images[1], 50, 50),
++    resize_image(loaded_bg_images[2], 50, 50),
++    resize_image(loaded_bg_images[3], 50, 50)
++]
++
+ scale_image = load_image('scale.png')
+ resized_scale_image = resize_image(scale_image, 400, 15)
+ 
+@@ -422,6 +456,13 @@
+         # Если выбран режим Bg
+         if int(wheel_position) % len(resized_images) == 1:
+             frame_copy = remove_background(frame_copy)
++            show_fourth_wheel = True
++            fourth_wheel_image = draw_wheel(frame_copy, fourth_wheel_position, bg_images)
++            frame_copy = overlay_panel(frame_copy, fourth_wheel_image, 0, 0, 1)
++            if int(fourth_wheel_position) % len(loaded_bg_images) != 0:
++                overlay_background(frame_copy, selected_image)
++        else:
++            show_fourth_wheel = False
+ 
+         # Отображение точки на кончике указательного пальца
+         if hand_results.multi_hand_landmarks:
+@@ -437,13 +478,13 @@
+                         if prev_position is not None:
+                             # формула для вычисления скорости
+                             velocity = (point_coords[1] - prev_position[1]) / -100.0
+-                            wheel_position = update_wheel_position(wheel_position, velocity)
++                            wheel_position = update_wheel_position(wheel_position, velocity, len(positions))
+                         prev_position = point_coords
+                     elif show_second_wheel and point_coords[1] < frame.shape[0] // 4:
+                         if prev_position is not None:
+                             # формула для вычисления скорости
+                             velocity = (point_coords[0] - prev_position[0]) / -100.0
+-                            second_wheel_position = update_wheel_position(second_wheel_position, velocity)
++                            second_wheel_position = update_wheel_position(second_wheel_position, velocity, len(loaded_images))
+                         prev_position = point_coords
+                         # Запоминаем выбранное изображение для отображения
+                         selected_image = loaded_images[int(second_wheel_position) % len(loaded_images)]
+@@ -451,17 +492,25 @@
+                         if prev_position is not None:
+                             # формула для вычисления скорости
+                             velocity = (point_coords[0] - prev_position[0]) / -100.0
+-                            third_wheel_position = update_wheel_position(third_wheel_position, velocity)
++                            third_wheel_position = update_wheel_position(third_wheel_position, velocity, len(loaded_effect_images))
+                         prev_position = point_coords
+                         # Запоминаем выбранное изображение для отображения
+                         selected_image = loaded_effect_images[int(third_wheel_position) % len(loaded_effect_images)]
++                    elif show_fourth_wheel and point_coords[1] < frame.shape[0] // 4:
++                        if prev_position is not None:
++                            # формула для вычисления скорости
++                            velocity = (point_coords[0] - prev_position[0]) / -100.0
++                            fourth_wheel_position = update_wheel_position(fourth_wheel_position, velocity, len(loaded_bg_images))
++                        prev_position = point_coords
++                        # Запоминаем выбранное изображение для отображения
++                        selected_image = loaded_bg_images[int(fourth_wheel_position) % len(loaded_bg_images)]
+                 else:
+                     prev_position = None
+                     velocity = 0
+ 
+         combined_image = apply_edge_blur(frame_copy, blur_radius)
+         # Отображение первого колеса
+-        wheel_image = draw_vertical_wheel(frame_copy, wheel_position)
++        wheel_image = draw_vertical_wheel(frame_copy, wheel_position, positions)
+         combined_image = overlay_panel(combined_image, wheel_image, 0, 0, 1)
+ 
+         # Если выбран режим Hats
+@@ -477,7 +526,7 @@
+             show_third_wheel = True
+             third_wheel_image = draw_wheel(frame_copy, third_wheel_position, effect_images)
+             combined_image = overlay_panel(combined_image, third_wheel_image, 0, 0, 1)
+-            # Добавление изображения scale.png, если третее колесо открыто на 0 или 1
++            # Добавление изображения scale.png, если третье колесо открыто на 0 или 1
+             if int(third_wheel_position) % len(effect_images) in [0, 1, 2]:
+                 combined_image = overlay_panel(combined_image, resized_scale_image, 200, 400, 1)
+                 # Получение положения руки для изменения параметров
