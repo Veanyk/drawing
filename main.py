@@ -1,15 +1,19 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import time
 from cvzone.SelfiSegmentationModule import SelfiSegmentation
 from PIL import Image
-
-# Инициализация mediapipe для отслеживания рук и лица
-mp_hands = mp.solutions.hands
-mp_face_mesh = mp.solutions.face_mesh
-mp_drawing = mp.solutions.drawing_utils
-mp_selfie_segmentation = mp.solutions.selfie_segmentation
-
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+from email.message import EmailMessage
+import smtplib
+import ssl
+from screeninfo import get_monitors
+import threading
+import subprocess
+import os
+import sys
 
 # Функция для вычисления координат указательного пальца
 def get_index_finger_tip(landmarks, image):
@@ -122,7 +126,7 @@ def alpha_blend(foreground, background, x_offset, y_offset):
     bg_h, bg_w, _ = background.shape
 
     if x_offset + fg_w > bg_w or y_offset + fg_h > bg_h:
-        raise ValueError("Изображение переднего плана выходит за границы фона")
+        raise ValueError("The foreground image extends beyond the background")
 
     alpha_foreground = foreground[:, :, 3] / 255.0
     alpha_background = 1.0 - alpha_foreground
@@ -350,12 +354,147 @@ def apply_edge_blur(image, blur_radius):
 
     return frame_copy
 
+def send_email(filename: str, receiver_email: str,
+               subject: str = "An email with attachment from Python",
+               body: str = "This is an email with attachment sent from Python",
+               sender_email: str = "gmandrtest@gmail.com",
+               password: str = "wsjpkirfwqvgbucx"):
+    smtp_server = "smtp.gmail.com"
+
+    msg = EmailMessage()
+    msg.set_content(body)
+    msg['Subject'] = subject
+    msg['From'] = sender_email
+    msg['To'] = receiver_email
+
+    with open(filename, 'rb') as fp:
+        img_data = fp.read()
+        msg.add_attachment(img_data, maintype='image', subtype='jpg', filename=filename)
+
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL(smtp_server, 465, context=context) as server:
+        try:
+            server.login(sender_email, password)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+        except Exception as e:
+            print(e)
+        finally:
+            server.quit()
+
+def get_receiver_email():
+    def center_window(root):
+        # Get screen width and height
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        # Calculate position x, y
+        position_right = int(screen_width/2 - 300)
+        position_down = int(screen_height/2 - 150)
+        root.geometry(f"400x200+{position_right}+{position_down}")
+
+    root = tk.Tk()
+    center_window(root)  # Center the window
+    root.withdraw()  # Скрываем главное окно
+    email = simpledialog.askstring("Input", "Введите email для отправки фотографии:", parent=root)
+    root.destroy()  # Закрываем окно после ввода
+    return email
+
+def show_info_window(message, max_line_length=30, line_height=30):
+    info_image = np.zeros((300, 600, 3), dtype=np.uint8)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    y0, dy = 50, line_height
+
+    words = message.split()
+    lines = []
+    current_line = ""
+
+    for word in words:
+        if len(current_line) + len(word) + 1 <= max_line_length:
+            current_line += (word + " ")
+        else:
+            lines.append(current_line.strip())
+            current_line = word + " "
+
+    if current_line:
+        lines.append(current_line.strip())
+
+    for i, line in enumerate(lines):
+        y = y0 + i * dy
+        cv2.putText(info_image, line, (50, y), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+
+    cv2.imshow("Info", info_image)
+    cv2.waitKey(1)
+
+def email_thread():
+    global message_window_shown, input_window_open
+    if int(wheel_position) % len(positions) == 3:
+        if cv2.getWindowProperty("Info", cv2.WND_PROP_VISIBLE) >= 1:
+            cv2.destroyWindow("Info")  # Закрываем окно Info перед показом Input
+        email = get_receiver_email()
+        print(email)
+        if email:
+            filename = "result.jpg"
+            cv2.imwrite(filename, frame_copy)
+            send_email(filename, receiver_email=email)
+            message_window_shown = True
+            cap.release()
+            cv2.destroyAllWindows()
+            venv_python = os.path.join(sys.prefix, 'Scripts', 'python.exe')
+            subprocess.run([venv_python, "start.py"])
+            exit()
+
+    else:
+        if input_window_open:  # Проверяем, если окно Input открыто, закрываем его
+            root = tk.Tk()
+            root.destroy()
+            input_window_open = False
+        show_info_window("Finish editing your photos and view the results")
+
+# Функция для вычисления расстояния между двумя точками
+def calculate_distance(point1, point2):
+    return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
+
+# Функция для определения руки относительно кругов
+def is_hand_in_circle(landmarks, circle_center, circle_radius):
+    index_tip = landmarks[8]
+    distance = calculate_distance(index_tip, circle_center)
+    return distance < circle_radius
+
+# Функция для закрашивания круга
+def draw_filled_circle(image, center, radius, elapsed_time, max_time, color):
+    if elapsed_time >= max_time:
+        cv2.circle(image, center, radius, color, thickness=-1)
+    else:
+        angle = int((elapsed_time / max_time) * 360)
+        axes = (radius, radius)
+        cv2.ellipse(image, center, axes, 0, 0, angle, color, thickness=-1)
+
+# Функция для наложения панельки
+def overlay_panel2(frame, panel_img, x, y, scale=1):
+    panel_img_resized = cv2.resize(panel_img, (0, 0), fx=scale, fy=scale)
+    panel_h, panel_w, panel_c = panel_img_resized.shape
+
+    if panel_c == 4:
+        alpha_channel = panel_img_resized[:, :, 3]
+        rgb_channels = panel_img_resized[:, :, :3]
+        alpha_mask = cv2.merge([alpha_channel, alpha_channel, alpha_channel])
+
+        roi = frame[y:y+panel_h, x:x+panel_w]
+        masked_frame = cv2.bitwise_and(roi, cv2.bitwise_not(alpha_mask))
+        masked_panel = cv2.bitwise_and(rgb_channels, alpha_mask)
+        overlay = cv2.add(masked_frame, masked_panel)
+        frame[y:y+panel_h, x:x+panel_w] = overlay
+    else:
+        frame[y:y+panel_h, x:x+panel_w] = panel_img_resized
+    return frame
+
+
+
 # Загрузка изображения
 frame = cv2.imread('screenshot.png', cv2.IMREAD_UNCHANGED)
-
+panel_img = cv2.imread('panel.png', cv2.IMREAD_UNCHANGED)
 # Проверяем, что изображение было успешно загружено
 if frame is None:
-    print("Изображение не найдено")
+    print("Image not found")
     exit()
 
 if frame.shape[2] == 4:
@@ -363,6 +502,19 @@ if frame.shape[2] == 4:
 
 # Инициализация камеры
 cap = cv2.VideoCapture(0)
+
+# Инициализация mediapipe для отслеживания рук и лица
+mp_hands = mp.solutions.hands
+mp_face_mesh = mp.solutions.face_mesh
+mp_drawing = mp.solutions.drawing_utils
+mp_selfie_segmentation = mp.solutions.selfie_segmentation
+
+monitors = get_monitors()
+single_monitor = monitors[0]
+second_monitor = monitors[1] if len(monitors) > 1 else single_monitor
+message_window_shown = False
+input_window_open = False
+info_message = ""
 
 # Переменные для отслеживания положения и скорости движения
 prev_position = None
@@ -379,6 +531,14 @@ selected_image = None
 brightness_value = 40  # Текущая яркость
 contrast_value = 40  # Текущая контрастность
 blur_radius = 1  # Радиус размытия
+
+# Положение панельки
+panel_center_left = (85, frame.shape[0] - 62)
+panel_center_right = (553, frame.shape[0] - 62)
+circle_radius = 47
+
+# Начальное время нахождения руки в круге
+right_circle_start_time = None
 
 positions = ['Hats', 'Bg', 'Effects', 'Result']
 # Загрузка изображений высокого разрешения
@@ -432,7 +592,7 @@ with mp_hands.Hands(
     while cap.isOpened():
         success, image = cap.read()
         if not success:
-            print("Камера не найдена")
+            print("Camera not found")
             continue
 
         # Отзеркаливание изображения по горизонтали
@@ -459,17 +619,41 @@ with mp_hands.Hands(
 
         handle_face_and_second_wheel(frame_copy, face_results, selected_image, img_width, img_height,
                                      resized_images)
-
         # Отображение точки на кончике указательного пальца
         if hand_results.multi_hand_landmarks:
             for hand_landmarks in hand_results.multi_hand_landmarks:
+                landmarks = [(int(lm.x * frame.shape[1]), int(lm.y * frame.shape[0])) for lm in hand_landmarks.landmark]
+                if int(wheel_position) % len(positions) == 3 and is_hand_in_circle(landmarks, panel_center_right,
+                                                                                   circle_radius):
+                    if right_circle_start_time is None:
+                        right_circle_start_time = time.time()
+                    elapsed_right_time = time.time() - right_circle_start_time
+                    draw_filled_circle(frame_copy, panel_center_right, circle_radius, elapsed_right_time, 2,
+                                       (0, 255, 0))
+
+                    if elapsed_right_time > 2:
+                        if not message_window_shown:
+                            frame_copy = frame.copy()
+                            frame_copy = change_brightness(frame_copy, brightness_value)
+                            frame_copy = change_contrast(frame_copy, contrast_value)
+                            if int(fourth_wheel_position) % len(loaded_bg_images) != 0:
+                                frame_copy = overlay_background(frame_copy,
+                                                                loaded_bg_images[
+                                                                    int(fourth_wheel_position) % len(loaded_bg_images)])
+                            frame_copy = apply_edge_blur(frame_copy, blur_radius)
+                            handle_face_and_second_wheel(frame_copy, face_results, selected_image, img_width,
+                                                         img_height,resized_images)
+                            email_thread()
+                            message_window_shown = True
+                else:
+                    right_circle_start_time = None
+
                 index_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
                 point_coords = (int(index_tip.x * img_width), int(index_tip.y * img_height))
                 cv2.circle(frame_copy, point_coords, 10, (0, 0, 255), -1)  # Красная точка на кончике пальца
-
                 # Проверяем, сжата ли рука в кулак и находится ли рука слева
                 if is_fist(hand_landmarks.landmark):
-                    print("Кулак обнаружен")
+                    print("Fist detected")
                     if point_coords[0] < frame.shape[1] // 4:
                         if prev_position is not None:
                             # формула для вычисления скорости
@@ -548,7 +732,16 @@ with mp_hands.Hands(
         else:
             show_third_wheel = False
 
-        cv2.imshow('view', image)
+            # Если выбран режим Result
+            if int(wheel_position) % len(positions) == 3:
+                # Отображение панели внизу изображения
+                panel_h, panel_w, _ = panel_img.shape
+                frame_copy = overlay_panel(frame_copy, panel_img, 0, img_height - panel_h, scale=1)
+            else:
+                show_info_window("Finish editing the photo and go to Result")
+
+        # Отображение frame_copy на втором мониторе по центру
+        cv2.namedWindow('Drawing_project', cv2.WINDOW_NORMAL)
         cv2.imshow('Drawing_project', frame_copy)
 
         if cv2.waitKey(5) & 0xFF == 27:
